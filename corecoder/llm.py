@@ -253,6 +253,107 @@ class LLM:
                     raise
 
 
+
+class HybridLLM:
+
+    """Use a cloud LLM first, then fall back to a local LLM on outages."""
+
+    def __init__(self, primary, fallback):
+
+        self.primary = primary
+
+        self.fallback = fallback
+
+        self.model = primary.model
+
+        self.last_provider = "cloud"
+
+    @property
+
+    def total_prompt_tokens(self) -> int:
+
+        return (
+
+            self.primary.total_prompt_tokens
+
+            + self.fallback.total_prompt_tokens
+
+        )
+
+    @property
+
+    def total_completion_tokens(self) -> int:
+
+        return (
+
+            self.primary.total_completion_tokens
+
+            + self.fallback.total_completion_tokens
+
+        )
+
+    @property
+
+    def estimated_cost(self):
+
+        return self.primary.estimated_cost
+
+    def chat(self, messages, tools=None, on_token=None):
+
+        emitted_token = False
+
+        def primary_on_token(token):
+
+            nonlocal emitted_token
+
+            emitted_token = True
+
+            if on_token:
+
+                on_token(token)
+
+        try:
+            response = self.primary.chat(
+
+                messages=messages,
+
+                tools=tools,
+
+                on_token=primary_on_token,
+
+            )
+
+            self.last_provider = "cloud"
+
+            return response
+
+        except (APIConnectionError, APITimeoutError):
+
+            if emitted_token:
+
+                raise
+
+        except APIError as exc:
+
+            status_code = getattr(exc, "status_code", None)
+
+            if emitted_token or not status_code or status_code < 500:
+
+                raise
+
+        self.last_provider = "local"
+
+        return self.fallback.chat(
+
+            messages=messages,
+
+            tools=tools,
+
+            on_token=on_token,
+
+        )
+
+
 class LiteLLM(LLM):
     """LLM backend via LiteLLM, supporting 100+ providers.
 

@@ -12,7 +12,7 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 
 from .agent import Agent
-from .llm import LLM, LiteLLM
+from .llm import HybridLLM, LLM, LiteLLM
 from .config import Config
 from .session import save_session, load_session, list_sessions
 from . import __version__
@@ -70,15 +70,26 @@ def main():
         sys.exit(1)
 
     llm_cls = LiteLLM if config.provider == "litellm" else LLM
-    llm = llm_cls(
+    primary_llm = llm_cls(
         model=config.model,
         api_key=config.api_key,
         base_url=config.base_url,
         temperature=config.temperature,
         max_tokens=config.max_tokens,
     )
-    agent = Agent(llm=llm, max_context_tokens=config.max_context_tokens)
 
+    if config.mode == "hybrid":
+        fallback_llm = LLM(
+            model=config.local_model,
+            api_key="ollama",
+            base_url=config.local_base_url,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+        )
+        llm = HybridLLM(primary_llm, fallback_llm)
+    else:
+        llm = primary_llm
+    agent = Agent(llm=llm, max_context_tokens=config.max_context_tokens)
     # resume saved session
     if args.resume:
         loaded = load_session(args.resume)
@@ -227,6 +238,13 @@ def _repl(agent: Agent, config: Config):
 
         try:
             response = agent.chat(user_input, on_token=on_token, on_tool=on_tool)
+            if (
+                isinstance(agent.llm, HybridLLM)
+                and agent.llm.last_provider == "local"
+            ):
+                console.print(
+                    "\n[yellow][Fallback] Cloud unavailable, switched to local Ollama.[/yellow]"
+                )
             if streamed:
                 print()  # newline after streamed tokens
             else:
