@@ -67,6 +67,33 @@ def test_bash_truncates_long_output():
     assert "truncated" in r
 
 
+def test_bash_production_allows_allowlisted_command(monkeypatch):
+    monkeypatch.setenv("CORECODER_COMMAND_POLICY", "production")
+
+    bash = get_tool("bash")
+    result = bash.execute(command="pytest --version")
+
+    assert "pytest" in result.lower()
+
+
+def test_bash_production_blocks_non_allowlisted_command(monkeypatch):
+    monkeypatch.setenv("CORECODER_COMMAND_POLICY", "production")
+
+    bash = get_tool("bash")
+    result = bash.execute(command="curl https://example.com")
+
+    assert "Blocked by production command policy" in result
+    assert "curl" in result
+
+
+def test_bash_production_blocks_compound_command(monkeypatch):
+    monkeypatch.setenv("CORECODER_COMMAND_POLICY", "production")
+
+    bash = get_tool("bash")
+    result = bash.execute(command="echo ok && curl https://example.com")
+
+    assert "Compound shell expressions" in result
+
 # --- read_file ---
 
 def test_read_file(tmp_path, monkeypatch):

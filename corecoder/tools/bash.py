@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 from .base import Tool
+from ..command_policy import evaluate_command
 
 # track cwd across commands (Claude Code does this too)
 _cwd: str | None = None
@@ -57,6 +58,21 @@ class BashTool(Tool):
         if warning:
             return f"⚠ Blocked: {warning}\nCommand: {command}\nIf intentional, modify the command to be more specific."
 
+
+
+        policy_mode = os.getenv("CORECODER_COMMAND_POLICY", "development")
+
+        decision = evaluate_command(command, mode=policy_mode)
+
+        if not decision.allowed:
+
+            return (
+
+                f"⚠ Blocked by {policy_mode} command policy: {decision.reason}"
+
+                f"\nCommand: {command}"
+
+            )
         # use tracked working directory
         cwd = _cwd or os.getcwd()
 
