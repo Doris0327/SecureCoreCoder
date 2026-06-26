@@ -27,6 +27,18 @@ def test_config_from_env():
     assert c.model == "test-model"
     del os.environ["CORECODER_MODEL"]
 
+def test_local_mode_config_from_env(monkeypatch):
+    monkeypatch.setenv("CORECODER_MODE", "local")
+    monkeypatch.setenv("LOCAL_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("LOCAL_BASE_URL", "http://localhost:11434/v1")
+
+    config = Config.from_env()
+
+    assert config.mode == "local"
+    assert config.local_model == "qwen2.5-coder:7b"
+    assert config.local_base_url == "http://localhost:11434/v1"
+
+
 
 def test_config_defaults():
     # temporarily clear relevant env vars
