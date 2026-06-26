@@ -26,6 +26,36 @@ def test_all_tools_have_valid_schema():
 
 # --- bash ---
 
+
+def test_bash_audits_allowed_command(tmp_path, monkeypatch):
+    from corecoder import audit
+
+    log_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(audit, "DEFAULT_AUDIT_LOG", log_path)
+
+    bash = get_tool("bash")
+    bash.execute(command="echo audit-ok")
+
+    content = log_path.read_text()
+    assert '"tool": "bash"' in content
+    assert '"allowed": true' in content
+    assert "echo audit-ok" in content
+
+
+def test_bash_audits_blocked_command(tmp_path, monkeypatch):
+    from corecoder import audit
+
+    log_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(audit, "DEFAULT_AUDIT_LOG", log_path)
+
+    bash = get_tool("bash")
+    bash.execute(command="rm -rf /")
+
+    content = log_path.read_text()
+    assert '"tool": "bash"' in content
+    assert '"allowed": false' in content
+    assert "recursive delete" in content
+
 def test_bash_basic():
     bash = get_tool("bash")
     assert "hello" in bash.execute(command="echo hello")

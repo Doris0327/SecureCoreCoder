@@ -12,6 +12,8 @@ import re
 import subprocess
 from .base import Tool
 from ..command_policy import evaluate_command
+from ..audit import write_audit_event
+
 
 # track cwd across commands (Claude Code does this too)
 _cwd: str | None = None
@@ -54,25 +56,40 @@ class BashTool(Tool):
     def execute(self, command: str, timeout: int = 120) -> str:
         global _cwd
         # safety check
+        policy_mode = os.getenv("CORECODER_COMMAND_POLICY", "development")
         warning = _check_dangerous(command)
         if warning:
+            write_audit_event({
+                "tool": "bash",
+                "command": command,
+                "policy_mode": policy_mode,
+                "allowed": False,
+                "reason": warning,
+            })
             return f"⚠ Blocked: {warning}\nCommand: {command}\nIf intentional, modify the command to be more specific."
 
 
-
-        policy_mode = os.getenv("CORECODER_COMMAND_POLICY", "development")
-
         decision = evaluate_command(command, mode=policy_mode)
-
         if not decision.allowed:
-
+            write_audit_event({
+                "tool": "bash",
+                "command": command,
+                "policy_mode": policy_mode,
+                "allowed": False,
+                "reason": decision.reason,
+            })
             return (
-
                 f"⚠ Blocked by {policy_mode} command policy: {decision.reason}"
-
                 f"\nCommand: {command}"
-
             )
+
+        write_audit_event({
+            "tool": "bash",
+            "command": command,
+            "policy_mode": policy_mode,
+            "allowed": True,
+            "reason": None,
+        })
         # use tracked working directory
         cwd = _cwd or os.getcwd()
 
