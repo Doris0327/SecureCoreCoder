@@ -1,10 +1,10 @@
 """Tests for cloud-to-local hybrid LLM fallback."""
 
 from unittest import mock
-
+from unittest.mock import MagicMock, patch
 import pytest
 from openai import APIConnectionError, BadRequestError
-
+from corecoder.audit import DEFAULT_AUDIT_LOG
 from corecoder.llm import HybridLLM, LLMResponse
 
 
@@ -83,3 +83,30 @@ def test_hybrid_does_not_fallback_on_bad_request():
         llm.chat([{"role": "user", "content": "hi"}])
 
     local.chat.assert_not_called()
+
+
+def test_writes_audit_event_when_falling_back():
+    primary = MagicMock()
+    fallback = MagicMock()
+
+    primary.model = "deepseek-chat"
+    fallback.model = "qwen2.5-coder:7b"
+
+    primary.chat.side_effect = APIConnectionError(
+        request=MagicMock(),
+    )
+    fallback.chat.return_value = MagicMock(content="local response")
+
+    with patch("corecoder.llm.write_audit_event") as audit:
+        llm = HybridLLM(primary, fallback)
+        result = llm.chat([{"role": "user", "content": "hello"}])
+
+    assert result.content == "local response"
+    assert llm.last_provider == "local"
+
+    audit.assert_called_once_with({
+        "event": "model_fallback",
+        "primary_model": "deepseek-chat",
+        "fallback_model": "qwen2.5-coder:7b",
+        "reason": "cloud request unavailable",
+    })

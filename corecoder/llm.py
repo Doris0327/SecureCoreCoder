@@ -15,7 +15,7 @@ import httpx
 from dataclasses import dataclass, field
 
 from openai import OpenAI, APIError, RateLimitError, APITimeoutError, APIConnectionError
-
+from .audit import write_audit_event
 
 @dataclass
 class ToolCall:
@@ -342,6 +342,17 @@ class HybridLLM:
                 raise
 
         self.last_provider = "local"
+        write_audit_event({
+
+            "event": "model_fallback",
+
+            "primary_model": self.primary.model,
+
+            "fallback_model": self.fallback.model,
+
+            "reason": "cloud request unavailable",
+
+        })
 
         return self.fallback.chat(
 
