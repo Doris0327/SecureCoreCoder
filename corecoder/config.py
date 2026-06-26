@@ -35,6 +35,11 @@ class Config:
     max_context_tokens: int = 128_000
     provider: str = "openai"
 
+    # Deployment mode: cloud / local / hybrid
+    mode: str = "cloud"
+    local_model: str = "qwen2.5-coder:7b"
+    local_base_url: str = "http://localhost:11434/v1"
+
     @classmethod
     def from_env(cls) -> "Config":
         # load .env if present (won't override existing env vars)
@@ -48,6 +53,9 @@ class Config:
         )
         return cls(
             model=os.getenv("CORECODER_MODEL", "gpt-4o"),
+            mode=os.getenv("CORECODER_MODE", "cloud"),
+            local_model=os.getenv("LOCAL_MODEL", "qwen2.5-coder:7b"),
+            local_base_url=os.getenv("LOCAL_BASE_URL", "http://localhost:11434/v1"),
             api_key=api_key,
             base_url=os.getenv("OPENAI_BASE_URL") or os.getenv("CORECODER_BASE_URL"),
             max_tokens=int(os.getenv("CORECODER_MAX_TOKENS", "4096")),

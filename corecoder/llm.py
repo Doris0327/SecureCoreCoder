@@ -11,6 +11,7 @@ single unified interface. Set CORECODER_PROVIDER=litellm.
 
 import json
 import time
+import httpx
 from dataclasses import dataclass, field
 
 from openai import OpenAI, APIError, RateLimitError, APITimeoutError, APIConnectionError
@@ -89,7 +90,19 @@ class LLM:
         **kwargs,
     ):
         self.model = model
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+
+        # Local Ollama endpoints must bypass inherited proxy settings.
+        is_local_endpoint = bool(base_url) and (
+            base_url.startswith("http://localhost")
+            or base_url.startswith("http://127.0.0.1")
+        )
+        http_client = httpx.Client(trust_env=False) if is_local_endpoint else None
+
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            http_client=http_client,
+        )
         self.extra = kwargs  # temperature, max_tokens, etc.
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
@@ -175,11 +188,48 @@ class LLM:
                 args = {}
             parsed.append(ToolCall(id=raw["id"], name=raw["name"], arguments=args))
 
+
+        content = "".join(content_parts)
+
+        if not parsed:
+
+            try:
+
+                raw_content = content.strip()
+                if raw_content.startswith("```"):
+                    raw_content = raw_content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+                local_call = json.loads(raw_content)
+                name = local_call.get("name")
+
+                arguments = local_call.get("arguments")
+
+                if isinstance(name, str) and isinstance(arguments, dict):
+
+                    parsed.append(
+
+                        ToolCall(
+
+                            id=f"local_{int(time.time() * 1000)}",
+
+                            name=name,
+
+                            arguments=arguments,
+
+                        )
+
+                    )
+
+                    content = ""
+
+            except (json.JSONDecodeError, AttributeError):
+
+                pass
+
         self.total_prompt_tokens += prompt_tok
         self.total_completion_tokens += completion_tok
 
         return LLMResponse(
-            content="".join(content_parts),
+            content=content,
             tool_calls=parsed,
             prompt_tokens=prompt_tok,
             completion_tokens=completion_tok,

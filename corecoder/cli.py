@@ -46,6 +46,13 @@ def main():
     if args.api_key:
         config.api_key = args.api_key
 
+
+    # Local-only mode: route all inference to the local Ollama server.
+    if config.mode == "local":
+        config.model = config.local_model
+        config.base_url = config.local_base_url
+        config.api_key = config.api_key or "ollama"
+
     if not config.api_key:
         console.print("[red bold]No API key found.[/]")
         console.print(
