@@ -239,11 +239,3 @@ The original CoreCoder project provides a compact educational implementation of 
 Upstream reference:
 
 - CoreCoder
-
----
-
-## License
-
-This project retains the upstream MIT license.
-
-See LICENSE.
